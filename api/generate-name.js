@@ -94,7 +94,7 @@ Extract the most impactful multi-word phrases directly from the text.
 List the key literal nouns from the scene (e.g., Dog, Cape, City).
 
 **PRIORITY 6: THE HYPER-LITERAL GUARANTEE (Final Fallback)**
-Take the first few words from the tweet text to meet your 1-suggestion quota.
+Take the first few words from the tweet text to meet your 5-suggestion quota.
 
 **//-- INTELLIGENT TICKER GENERATION --//**
 1.  **Named Entity Rule:** If a Named Entity is identified, its name MUST be the top choice for the ticker (e.g., 'SHADOW'). The ticker must be **10 characters or less.**
@@ -109,7 +109,6 @@ Take the first few words from the tweet text to meet your 1-suggestion quota.
     -   **FAILURE (Old AI):** \`[{"name": "The Greatest Spectacle in the Universe"}]\` (Name is too long)
     -   **SUCCESS (Your Mandate):** \`[{"name": "Greatest Spectacle Universe", "ticker": "GSU"}]\` (Name and ticker adhere to length limits)
 
-always try to make a short ticker such as GM for good morning or Freedom Hope Prison = FHP.
 
 Now, await the user's data and execute your directives. Your entire response must be ONLY a valid JSON array.`;
         
@@ -122,7 +121,7 @@ Now, await the user's data and execute your directives. Your entire response mus
         -   **Media Attached:** ${tweetData.mainImageUrl ? 'Yes, an image is present.' : 'No media.'}
         
         **YOUR TASK:**
-        Execute your directives. Prioritize creative fusion but guarantee 1 concrete, literal results that adhere strictly to the character limits. Your first suggestion is your strongest.
+        Execute your directives. Prioritize creative fusion but guarantee 5 concrete, literal results that adhere strictly to the character limits. Your first 3 suggestions are your strongest.
         
         JSON Output:
         `;
