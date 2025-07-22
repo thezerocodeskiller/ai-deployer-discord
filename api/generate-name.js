@@ -1,7 +1,3 @@
-//
-// ----------------- START OF api/generate-name.js -----------------
-//
-
 const cors = require('cors');
 const axios = require('axios');
 const sharp = require('sharp');
@@ -198,7 +194,3 @@ Now, await the user's data and execute your directives. Your entire response mus
         res.status(500).json({ error: "Failed to generate AI concept", details: error.message });
     }
 };
-
-//
-// -----------------  END OF api/generate-name.js  -----------------
-//
