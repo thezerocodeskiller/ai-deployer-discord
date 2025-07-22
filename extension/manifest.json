@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Uxento AI Creator – Discord",
+  "version": "1.2",
+  "description": "Create meme coins directly from tweet-embeds inside Discord.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://discord.com/*",
+    "https://*.discordapp.com/*",
+    "https://ai-deployer-xi.vercel.app/*",
+    "https://eu-dev.uxento.io/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://discord.com/*",
+        "https://*.discordapp.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
