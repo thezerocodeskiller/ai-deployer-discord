@@ -1,20 +1,26 @@
-// This is a dedicated serverless function for Vercel.
+//
+// ----------------- START OF api/generate-name.js -----------------
+//
+
 const cors = require('cors');
 const axios = require('axios');
 const sharp = require('sharp');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const fal = require('@fal-ai/serverless-client');
 
 // --- CONFIGURATION ---
-const API_KEY = process.env.API_KEY; 
-if (!API_KEY) {
-    throw new Error("FATAL ERROR: API_KEY is not set in environment variables.");
-}
-const MODEL_NAME = "gemini-2.5-flash-lite-preview-06-17"; // Updated to the recommended model
+const GOOGLE_API_KEY = process.env.API_KEY;
+const FAL_API_KEY = process.env.FAL_API_KEY;
 
-const genAI = new GoogleGenerativeAI(API_KEY);
-const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    // Re-added safety settings as a best practice
+if (!GOOGLE_API_KEY || !FAL_API_KEY) {
+    throw new Error("FATAL ERROR: Missing Google API_KEY or FAL_API_KEY in environment variables.");
+}
+
+fal.config({ credentials: FAL_API_KEY });
+
+const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
+const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash-lite-preview-06-17", // Using the latest flash model for speed
     safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
         { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -34,6 +40,7 @@ const runMiddleware = (req, res, fn) => {
     });
 };
 
+// This is your original helper to prepare an image for Gemini analysis
 async function fetchAndProcessImage(imageUrl) {
     try {
         const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
@@ -41,14 +48,31 @@ async function fetchAndProcessImage(imageUrl) {
             .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
             .jpeg({ quality: 75 })
             .toBuffer();
-        return { 
-            inlineData: { 
-                data: processedImageBuffer.toString('base64'), 
-                mimeType: 'image/jpeg'
-            } 
-        };
+        return { inlineData: { data: processedImageBuffer.toString('base64'), mimeType: 'image/jpeg' } };
     } catch (error) {
         console.error("Error fetching or processing image:", error.message);
+        return null;
+    }
+}
+
+// --- NEW IMAGE GENERATION HELPERS ---
+async function generateColorImage(color, text) {
+    const svgImage = `<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="${color}" /><text x="50%" y="50%" font-family="Arial, sans-serif" font-size="90" fill="white" text-anchor="middle" dominant-baseline="central" font-weight="bold">${text}</text></svg>`;
+    const svgBuffer = Buffer.from(svgImage);
+    const jpegBuffer = await sharp(svgBuffer).jpeg({ quality: 90 }).toBuffer();
+    return `data:image/jpeg;base64,${jpegBuffer.toString('base64')}`;
+}
+
+async function generateAiImage(prompt) {
+    try {
+        console.log(`Sending prompt to Fal.ai: "${prompt}"`);
+        const result = await fal.subscribe("fal-ai/fast-sdxl", {
+            input: { prompt },
+            logs: false,
+        });
+        return result.images[0].url;
+    } catch (error) {
+        console.error("Fal.ai image generation failed:", error);
         return null;
     }
 }
@@ -61,10 +85,12 @@ module.exports = async (req, res) => {
     if (req.method !== 'POST') { return res.status(405).json({ error: 'Method Not Allowed' }); }
 
     const tweetData = req.body;
-    console.log("Request received for Gemini (V6 Char Limits). Data:", tweetData);
+    console.log("Request received for Gemini (V6 Prompt) + Image Gen. Data:", tweetData);
 
     try {
-        // --- PROMPT V6: Character Limits Re-Integrated ---
+        // --- STAGE 1: Generate Names/Tickers using YOUR PROVEN V6 PROMPT ---
+
+        // This is YOUR original, high-quality prompt. It is preserved perfectly.
         const systemInstructions = `You are 'AlphaOracle V6', The Ultimate Memecoin AI. You are a master of creative synthesis and hyper-literal extraction. Your primary goal is to be creative, but you will NEVER fail to provide a concrete answer that fits the required format.
 
 **//-- DUAL CORE DIRECTIVES --//**
@@ -124,7 +150,6 @@ Now, await the user's data and execute your directives. Your entire response mus
         
         JSON Output:
         `;
-        
         userContentParts.push({ text: textPayload });
 
         if (tweetData.mainImageUrl) {
@@ -133,7 +158,7 @@ Now, await the user's data and execute your directives. Your entire response mus
                 userContentParts.push(imagePart);
             }
         }
-        
+
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: "Here are your instructions for our session." }] },
@@ -149,11 +174,41 @@ Now, await the user's data and execute your directives. Your entire response mus
         const jsonMatch = text.match(/\[.*\]/s);
         if (!jsonMatch) { throw new Error("AI did not return a valid JSON array. Response was: " + text); }
 
-        const aiResponse = JSON.parse(jsonMatch[0]);
-        res.status(200).json(aiResponse);
+        const suggestions = JSON.parse(jsonMatch[0]);
+
+        // --- STAGE 2: Generate the Image using the NEW LOGIC ---
+        let generatedImageUrl = null;
+        if (tweetData.mainImageUrl) {
+            generatedImageUrl = tweetData.mainImageUrl;
+            console.log("Tweet already has an image, using that:", tweetData.mainImageUrl);
+        } else {
+            const topSuggestionName = suggestions[0].name;
+            const topSuggestionTicker = suggestions[0].ticker;
+            const colorMatch = tweetData.mainText.match(/\$([a-zA-Z]+)/);
+
+            if (colorMatch && colorMatch[1]) {
+                const color = colorMatch[1].toLowerCase();
+                console.log(`Simple color prompt detected. Generating image for color: "${color}"`);
+                generatedImageUrl = await generateColorImage(color, `$${topSuggestionTicker}`);
+            } else {
+                const imagePrompt = `${topSuggestionName}, memecoin logo, clean vector art, vibrant colors, white background`;
+                generatedImageUrl = await generateAiImage(imagePrompt);
+            }
+        }
+
+        // --- STAGE 3: Combine and Respond with the NEW STRUCTURE ---
+        const finalResponse = {
+            suggestions: suggestions,
+            generatedImageUrl: generatedImageUrl
+        };
+        res.status(200).json(finalResponse);
 
     } catch (error) {
-        console.error("Full error during AI generation:", error); 
+        console.error("Full error during AI generation:", error);
         res.status(500).json({ error: "Failed to generate AI concept", details: error.message });
     }
 };
+
+//
+// -----------------  END OF api/generate-name.js  -----------------
+//```
