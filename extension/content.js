@@ -1,13 +1,13 @@
 /*
-   Uxento AI Sniper v29 – Discord Edition (The Stable Approach)
-   This version abandons immediate processing to fix the race condition.
-   It now waits a fraction of a second for Discord to fully render new messages
-   before reading them, ensuring data is never missed. This is the most
-   robust and reliable method.
+   Uxento AI Sniper v32 – Discord Edition (Correct Fallback Logic)
+   This version implements the correct, two-stage image handling:
+   1. AI Analysis: Uses ONLY the main tweet image (or null if none exists).
+   2. API Creation: Uses the main tweet image, BUT falls back to the author's
+      profile picture if the main image is missing, ensuring the API call succeeds.
 */
-console.log('🚀 Uxento AI Sniper v29 – The Stable Approach ACTIVE');
+console.log('🚀 Uxento AI Sniper v32 – Correct Fallback Logic ACTIVE');
 
-// ---------- Helper Functions ----------
+// ---------- Helper Functions (Unchanged) ----------
 function simulateTyping(inputElement, text) {
     if (!inputElement) return;
     inputElement.focus();
@@ -28,7 +28,7 @@ function parseUrlFromProxy(proxyHref) {
     return proxyHref;
 }
 
-// ---------- Data Extraction (Simplified and More Robust) ----------
+// ---------- Data Extraction (REVISED to separate image sources) ----------
 function extractDataFromDiscord(messageListItem) {
     const embedArticle = messageListItem.querySelector('article[class*="embedFull"]');
     if (!embedArticle) return null;
@@ -37,27 +37,31 @@ function extractDataFromDiscord(messageListItem) {
         mainText: embedArticle.querySelector('div[class*="embedDescription"]')?.innerText.trim() || '',
         author: embedArticle.querySelector('a[class*="embedAuthorNameLink"]')?.textContent.trim().replace('@', '').toLowerCase() || null,
         twitterUrl: null,
-        mainImageUrl: null
+        // **NEW: We now track two separate image URLs**
+        tweetImageUrl: null,  // The image from the tweet content itself
+        authorImageUrl: null // The author's profile picture
     };
 
+    // --- Get Author PFP ---
+    const authorIcon = embedArticle.querySelector('img[class*="embedAuthorIcon"]');
+    if (authorIcon?.src) {
+        data.authorImageUrl = authorIcon.src;
+    }
+
+    // --- Get Text & Links ---
     const titleLink = embedArticle.querySelector('a[class*="embedTitleLink"]');
     const authorLink = embedArticle.querySelector('a[class*="embedAuthorNameLink"]');
-    const mediaWrapperLink = embedArticle.querySelector('a[class*="originalLink"]');
-
-    // 1. Establish the main link URL (e.g., the Tweet's URL)
     if (titleLink?.href) data.twitterUrl = titleLink.href;
     else if (authorLink?.href) data.twitterUrl = authorLink.href;
 
-    // 2. Establish the media URL (the image or video)
+    // --- Get Main Tweet Image/Video ---
+    const mediaWrapperLink = embedArticle.querySelector('a[class*="originalLink"]');
     if (mediaWrapperLink?.href) {
-        const parsedUrl = parseUrlFromProxy(mediaWrapperLink.href);
-        if (parsedUrl) data.mainImageUrl = parsedUrl;
+        data.tweetImageUrl = parseUrlFromProxy(mediaWrapperLink.href);
     }
-
-    // 3. Final Validation: If we have neither a link nor an image, it's not a valid target.
-    if (!data.twitterUrl && !data.mainImageUrl) return null;
-
-    // 4. If author is still missing, grab it from the message header as a fallback.
+    
+    // --- Final Validation ---
+    if (!data.twitterUrl && !data.tweetImageUrl) return null; // Must have at least one primary content piece
     if (!data.author) {
         data.author = messageListItem.querySelector('h3[class*="header"] span[class*="username"]')?.textContent.trim().toLowerCase() || 'unknown';
     }
@@ -65,9 +69,10 @@ function extractDataFromDiscord(messageListItem) {
     return data;
 }
 
-// ---------- UI and API Logic (Unchanged and Stable) ----------
+// ---------- UI and API Logic (API call is now smarter) ----------
 const cardFireState = {};
 function getPanelTemplate(cardId) {
+    // Unchanged
     return `
     <div class="uxento-panel" style="width: 280px; flex-shrink: 0; padding: 12px; background: #2b2d31; border-left: 1px solid #404249; display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #f2f3f5;">
       <button id="insta-${cardId}" style="background: #be185d; color: #fff; border: none; border-radius: 4px; padding: 10px; cursor: pointer; font-weight: 600;">Insta-Snipe Top Suggestion</button>
@@ -76,7 +81,7 @@ function getPanelTemplate(cardId) {
       <div style="flex:1; overflow-y:auto; max-height:400px; display:flex; flex-direction:column; gap:6px;">
         <ul id="sugg-${cardId}" style="list-style:none; padding:0; margin:0;"><li style="color:#a1a1aa;text-align:center;padding:10px;">✨ Consulting Oracle…</li></ul>
       </div>
-      <div><label style="color: #b5bac1; font-size: 11px; display: block; margin-bottom: 4px;">Buy Amount (SOL)</label><input id="amt-${cardId}" value="1" style="box-sizing: border-box; width:100%;background:#383a40;border:1px solid #5c5f66;border-radius:4px;color:#f2f3f5;padding:8px;"></div>
+      <div><label style="color: #b5bac1; font-size: 11px; display: block; margin-bottom: 4px;">Buy Amount (SOL)</label><input id="amt-${cardId}" value="0.001" style="box-sizing: border-box; width:100%;background:#383a40;border:1px solid #5c5f66;border-radius:4px;color:#f2f3f5;padding:8px;"></div>
       <button id="create-${cardId}" disabled style="background: #3f3f46; color: #a1a1aa; border: none; border-radius: 4px; padding: 10px; cursor: not-allowed; font-weight: 600;">Create Manually</button>
     </div>
   `;
@@ -88,7 +93,17 @@ function createCoin(cardId, tweetData, name, symbol, amount) {
     const createButton = document.getElementById(`create-${cardId}`);
     instaButton.disabled = true; createButton.disabled = true;
     instaButton.textContent = 'FIRING...'; instaButton.style.backgroundColor = '#d97706';
-    chrome.runtime.sendMessage({ action: 'CREATE_COIN', payload: { name, symbol, twitter: tweetData.twitterUrl, image: tweetData.mainImageUrl, amount: parseFloat(amount), astralTip: 0.002 } }, (response) => {
+    createButton.textContent = 'DEPLOYING...';
+
+    // --- THE CRITICAL FALLBACK LOGIC ---
+    // Use the main tweet image if it exists, otherwise use the author's profile picture.
+    const imageForApi = tweetData.tweetImageUrl || tweetData.authorImageUrl;
+    console.log(`Preparing API call. Main image: ${tweetData.tweetImageUrl}, Fallback PFP: ${tweetData.authorImageUrl}. Using: ${imageForApi}`);
+
+    chrome.runtime.sendMessage({
+        action: 'CREATE_COIN',
+        payload: { name, symbol, twitter: tweetData.twitterUrl, image: imageForApi, amount: parseFloat(amount), astralTip: 0.002 }
+    }, (response) => {
         if (response?.ok) {
             instaButton.textContent = '✅ SNIPE SUCCESSFUL!'; createButton.textContent = '✅ CREATED';
             instaButton.style.backgroundColor = '#16a34a';
@@ -101,25 +116,21 @@ function createCoin(cardId, tweetData, name, symbol, amount) {
     });
 }
 
-// ---------- Core Processing Logic with Delay to Prevent Race Conditions ----------
+// ---------- Core Processing Logic ----------
 async function processMessage(messageListItem) {
     if (messageListItem.dataset.aiProcessed) return;
-    messageListItem.dataset.aiProcessed = 'true'; // Mark immediately to prevent duplicates
+    messageListItem.dataset.aiProcessed = 'true';
 
-    // **THE NEW APPROACH:** Wait a moment for Discord to fully render the embed.
     setTimeout(async () => {
         const tweetData = extractDataFromDiscord(messageListItem);
-
-        if (!tweetData) {
-            // If after waiting there's still no valid data, we stop.
-            return;
-        }
+        if (!tweetData) return;
 
         console.log("Processing NEW Embed:", tweetData);
         const cardId = 'discord-' + Date.now() + Math.random().toString(36).slice(2, 7);
         const accessoriesContainer = messageListItem.querySelector('div[id^="message-accessories"]');
         if (!accessoriesContainer) return;
         
+        // Setup UI (unchanged)
         accessoriesContainer.style.display = 'flex';
         accessoriesContainer.style.alignItems = 'flex-start';
         accessoriesContainer.style.gap = '16px';
@@ -136,10 +147,19 @@ async function processMessage(messageListItem) {
         createBtn.onclick = () => createCoin(cardId, tweetData, nameIn.value, tickIn.value, amtIn.value);
         
         try {
+            // --- AI CALL USES THE PURE TWEET IMAGE URL ---
+            const bodyForAI = {
+                mainText: tweetData.mainText,
+                quotedText: "", // You can add logic for this later if needed
+                mainImageUrl: tweetData.tweetImageUrl // This will be null if there's no main image, which is correct.
+            };
+
+            console.log("Sending data to AI:", bodyForAI);
+            
         const response = await fetch('https://ai-deployer-discord.vercel.app/api/generate-name', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mainText: tweetData.mainText, quotedText: tweetData.quotedText, mainImageUrl: tweetData.mainImageUrl })
+                body: JSON.stringify(bodyForAI)
             });
             if (!response.ok) throw new Error(`AI API Error: ${response.status}`);
             const suggestions = await response.json();
@@ -151,14 +171,18 @@ async function processMessage(messageListItem) {
                 li.onmouseenter = () => li.style.borderColor = '#4f46e5';
                 li.onmouseleave = () => li.style.borderColor = '#52525b';
                 li.onclick = () => {
-                    simulateTyping(nameIn, s.name); simulateTyping(tickIn, s.ticker);
-                    createBtn.disabled = false; createBtn.style.cssText = 'background:#4f46e5;color:#fff;border:none;border-radius:4px;padding:10px;cursor:pointer;font-weight:600;';
+                    simulateTyping(nameIn, s.name);
+                    simulateTyping(tickIn, s.ticker);
+                    createCoin(cardId, tweetData, s.name, s.ticker, amtIn.value);
                 };
                 suggUl.appendChild(li);
                 if (index === 0) {
-                    simulateTyping(nameIn, s.name); simulateTyping(tickIn, s.ticker);
-                    createBtn.disabled = false; createBtn.style.backgroundColor = '#4f46e5';
-                    createBtn.style.color = '#fff'; createBtn.style.cursor = 'pointer';
+                    simulateTyping(nameIn, s.name);
+                    simulateTyping(tickIn, s.ticker);
+                    createBtn.disabled = false;
+                    createBtn.style.backgroundColor = '#4f46e5';
+                    createBtn.style.color = '#fff';
+                    createBtn.style.cursor = 'pointer';
                 }
             });
         } catch (e) {
@@ -166,10 +190,10 @@ async function processMessage(messageListItem) {
             suggUl.innerHTML = `<li style="color:#ef4444; text-align: center; padding: 10px;">AI suggestion failed.</li>`;
             instaBtn.disabled = true; instaBtn.textContent = 'AI FAILED'; instaBtn.style.backgroundColor = '#ef4444';
         }
-    }, 250); // A 250ms delay to ensure the embed is fully rendered.
+    }, 250);
 }
 
-// ---------- Event-Driven Observer Logic (Unchanged and Performant) ----------
+// ---------- Event-Driven Observer Logic (Unchanged and Stable) ----------
 const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
