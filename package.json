@@ -15,6 +15,6 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "sharp": "^0.33.4",
-    "fal-js-client": "^0.3.0"
+    "@fal-ai/serverless-client": "^0.3.0"
   }
 }
