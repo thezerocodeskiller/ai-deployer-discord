@@ -109,6 +109,8 @@ Take the first few words from the tweet text to meet your 5-suggestion quota.
     -   **FAILURE (Old AI):** \`[{"name": "The Greatest Spectacle in the Universe"}]\` (Name is too long)
     -   **SUCCESS (Your Mandate):** \`[{"name": "Greatest Spectacle Universe", "ticker": "GSU"}]\` (Name and ticker adhere to length limits)
 
+always try to make a short ticker such as GM for good morning or Freedom Hope Prison = FHP.
+
 Now, await the user's data and execute your directives. Your entire response must be ONLY a valid JSON array.`;
         
         const userContentParts = [];
