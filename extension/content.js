@@ -1,9 +1,10 @@
 /*
-   Uxento AI Sniper v25 – Discord Edition (Resilient Image Extractor)
-   This version includes a more robust image and video selector to correctly
-   handle different embed structures found in the wild, fixing the null image bug.
+   Uxento AI Sniper v24 – Discord Edition (Correct Layout & Stable)
+   This version uses the CSS 'order' property to definitively force the UI panel
+   to the right of the embed, fixing the layout issue while retaining all
+   performance and stability improvements.
 */
-console.log('🚀 Uxento AI Sniper v25 – Resilient Mode ACTIVE');
+console.log('🚀 Uxento AI Sniper v24 – Layout Fix ACTIVE');
 
 // ---------- Helper Functions (Unchanged) ----------
 function simulateTyping(inputElement, text) {
@@ -14,9 +15,7 @@ function simulateTyping(inputElement, text) {
     inputElement.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-// ==============================================================================
-//  UPDATED FUNCTION
-// ==============================================================================
+// ---------- Data Extraction (Unchanged, robust) ----------
 function extractDataFromDiscord(messageListItem) {
     const data = {
         mainText: '',
@@ -25,45 +24,27 @@ function extractDataFromDiscord(messageListItem) {
         twitterUrl: '',
         mainImageUrl: null,
     };
-
     const embedAuthor = messageListItem.querySelector('a[class*="embedAuthorNameLink"]');
     if (embedAuthor) data.author = embedAuthor.textContent.trim().replace('@', '').toLowerCase();
-
     const embedTitleLink = messageListItem.querySelector('a[class*="embedTitleLink"]');
     if (embedTitleLink) data.twitterUrl = embedTitleLink.href;
-    
     if (!data.twitterUrl) {
        const authorLink = messageListItem.querySelector('a[class*="embedAuthorNameLink"]');
        if (authorLink && (authorLink.href.includes('twitter.com') || authorLink.href.includes('x.com') || authorLink.href.includes('instagram.com'))) {
            data.twitterUrl = authorLink.href;
        }
     }
-
     const embedDescription = messageListItem.querySelector('div[class*="embedDescription"]');
     if (embedDescription) data.mainText = embedDescription.innerText.trim();
-    
     const blockquote = embedDescription?.querySelector('blockquote');
     if (blockquote) {
         data.quotedText = blockquote.innerText.trim();
         data.mainText = data.mainText.replace(data.quotedText, '').trim();
     }
-
-    // *** THE FIX IS HERE: A MORE ROBUST MEDIA SELECTOR ***
-    // This query now checks for multiple common ways Discord structures images and videos
-    // inside embeds, making it much less likely to fail.
-    const image = messageListItem.querySelector(
-        'div[class*="imageContent"] img, div[class*="embedImage"] img, div[class*="imageContainer"] img, video[class*="video-"]'
-    );
-    
-    if (image) {
-        // Use the `src` for images, or the `poster` for videos as a fallback.
-        data.mainImageUrl = image.src || image.poster;
-    }
-    
+    const image = messageListItem.querySelector('div[class*="embedImage"] img, div[class*="embedVideo"] video');
+    if (image) data.mainImageUrl = image.src || image.poster;
     return data.twitterUrl ? data : null;
 }
-// ==============================================================================
-
 
 // ---------- UI and API Logic (Unchanged) ----------
 const cardFireState = {};
@@ -108,7 +89,7 @@ function createCoin(cardId, tweetData, name, symbol, amount) {
     });
 }
 
-// ---------- Core Processing Logic (Unchanged, layout fix is stable) ----------
+// ---------- Core Processing Logic for a Single Message ----------
 async function processMessage(messageListItem) {
     if (messageListItem.dataset.aiProcessed === 'true') return;
     const embedArticle = messageListItem.querySelector('article[class*="embedFull"]');
@@ -118,24 +99,36 @@ async function processMessage(messageListItem) {
         messageListItem.dataset.aiProcessed = 'true';
         return;
     }
+
     messageListItem.dataset.aiProcessed = 'true';
-    console.log("Processing NEW Embed:", tweetData);
+    console.log("Processing NEW Embed:", tweetData.twitterUrl);
     const cardId = 'discord-' + Date.now() + Math.random().toString(36).slice(2, 7);
+
+    // **DEFINITIVE LAYOUT FIX**
     const accessoriesContainer = messageListItem.querySelector('div[id^="message-accessories"]');
     if (!accessoriesContainer) return;
+    
+    // 1. Set the container to use Flexbox
     accessoriesContainer.style.display = 'flex';
     accessoriesContainer.style.alignItems = 'flex-start';
-    accessoriesContainer.style.gap = '16px';
+    accessoriesContainer.style.gap = '16px'; // Optional: adds space between embed and panel
+
+    // 2. Ensure the original embed doesn't overflow and has a low order number
     accessoriesContainer.querySelectorAll('article[class*="embedFull"]').forEach(embed => {
         embed.style.flex = '1';
         embed.style.minWidth = '0';
-        embed.style.order = '1';
+        embed.style.order = '1'; // Tell it to be on the left
     });
+
+    // 3. Create the panel and give it a high order number to force it to the right
     const panelDiv = document.createElement('div');
     panelDiv.innerHTML = getPanelTemplate(cardId);
     const panelElement = panelDiv.firstElementChild;
-    panelElement.style.order = '99';
+    panelElement.style.order = '99'; // Tell our panel to be on the right
+    
     accessoriesContainer.appendChild(panelElement);
+
+    // Wire up UI
     const instaBtn = document.getElementById(`insta-${cardId}`);
     const createBtn = document.getElementById(`create-${cardId}`);
     const nameIn = document.getElementById(`name-${cardId}`);
@@ -144,6 +137,8 @@ async function processMessage(messageListItem) {
     const suggUl = document.getElementById(`sugg-${cardId}`);
     instaBtn.onclick = () => createCoin(cardId, tweetData, nameIn.value, tickIn.value, amtIn.value);
     createBtn.onclick = () => createCoin(cardId, tweetData, nameIn.value, tickIn.value, amtIn.value);
+
+    // Fetch AI suggestions (Unchanged)
     try {
         const response = await fetch('https://ai-deployer-discord.vercel.app/api/generate-name', {
             method: 'POST',
@@ -184,6 +179,7 @@ async function processMessage(messageListItem) {
     }
 }
 
+
 // ---------- Event-Driven Observer Logic (Unchanged and Performant) ----------
 const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
@@ -199,8 +195,10 @@ const observer = new MutationObserver((mutations) => {
         }
     }
 });
+
 observer.observe(document.body, {
     childList: true,
     subtree: true
 });
+
 console.log("Observer is now watching for new messages...");
