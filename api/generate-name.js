@@ -9,12 +9,11 @@ const API_KEY = process.env.API_KEY;
 if (!API_KEY) {
     throw new Error("FATAL ERROR: API_KEY is not set in environment variables.");
 }
-const MODEL_NAME = "gemini-2.5-flash-lite-preview-06-17"; // Updated to the recommended model
+const MODEL_NAME = "gemini-1.5-flash-latest"; // Using the latest Flash model
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ 
     model: MODEL_NAME,
-    // Re-added safety settings as a best practice
     safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
         { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -34,37 +33,70 @@ const runMiddleware = (req, res, fn) => {
     });
 };
 
+/**
+ * **UPDATED FUNCTION TO FIX IMAGE DOWNLOADS**
+ * Fetches an image from a URL, adding a browser User-Agent to prevent being blocked by CDNs like Discord's.
+ * @param {string} imageUrl The URL of the image to fetch.
+ * @returns {Promise<Object|null>} A formatted image object for the AI, or null if it fails.
+ */
 async function fetchAndProcessImage(imageUrl) {
+    console.log(`Attempting to fetch and process image: ${imageUrl}`);
     try {
-        const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+        // **THE FIX:** Add a browser-like User-Agent to the request headers.
+        // This makes our backend request look like it's from a normal browser,
+        // bypassing CDN blocks.
+        const response = await axios.get(imageUrl, {
+            responseType: 'arraybuffer',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+            },
+            timeout: 8000 // 8-second timeout for slow images
+        });
+
+        if (!response.data || response.data.length === 0) {
+            throw new Error("Downloaded image data is empty.");
+        }
+
+        console.log(`Successfully downloaded image (${(response.data.length / 1024).toFixed(2)} KB). Processing with Sharp...`);
+        
         const processedImageBuffer = await sharp(response.data)
             .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 75 })
+            .jpeg({ quality: 80 })
             .toBuffer();
-        return { 
-            inlineData: { 
-                data: processedImageBuffer.toString('base64'), 
+            
+        console.log("Image successfully processed. Returning base64 data.");
+        
+        return {
+            inlineData: {
+                data: processedImageBuffer.toString('base64'),
                 mimeType: 'image/jpeg'
-            } 
+            }
         };
     } catch (error) {
-        console.error("Error fetching or processing image:", error.message);
-        return null;
+        // Log detailed errors if fetching fails for any reason
+        console.error("--- IMAGE PROCESSING FAILED ---");
+        if (error.response) {
+            console.error(`Error: Server responded with status ${error.response.status}`);
+        } else if (error.request) {
+            console.error("Error: No response received from image server. Is the URL correct and public?");
+        } else {
+            console.error('Error:', error.message);
+        }
+        return null; // IMPORTANT: Return null on failure
     }
 }
 
 // --- MAIN HANDLER FUNCTION ---
 module.exports = async (req, res) => {
     await runMiddleware(req, res, corsMiddleware);
-
-    if (req.method === 'OPTIONS') { return res.status(200).end(); }
-    if (req.method !== 'POST') { return res.status(405).json({ error: 'Method Not Allowed' }); }
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+    }
 
     const tweetData = req.body;
-    console.log("Request received for Gemini (V6 Char Limits). Data:", tweetData);
+    console.log("Received data for AI analysis:", tweetData);
 
     try {
-        // --- PROMPT V6: Character Limits Re-Integrated ---
         const systemInstructions = `You are 'AlphaOracle V6', The Ultimate Memecoin AI. You are a master of creative synthesis and hyper-literal extraction. Your primary goal is to be creative, but you will NEVER fail to provide a concrete answer that fits the required format.
 
 **//-- DUAL CORE DIRECTIVES --//**
@@ -125,8 +157,10 @@ Now, await the user's data and execute your directives. Your entire response mus
         JSON Output:
         `;
         
+        
         userContentParts.push({ text: textPayload });
 
+        // This is where the fix makes a difference. If mainImageUrl exists, we now successfully fetch it.
         if (tweetData.mainImageUrl) {
             const imagePart = await fetchAndProcessImage(tweetData.mainImageUrl);
             if (imagePart) {
@@ -136,18 +170,18 @@ Now, await the user's data and execute your directives. Your entire response mus
         
         const chat = model.startChat({
             history: [
-                { role: "user", parts: [{ text: "Here are your instructions for our session." }] },
-                { role: "model", parts: [{ text: systemInstructions }] }
+                { role: "user", parts: [{ text: systemInstructions }] },
+                { role: "model", parts: [{ text: "Awaiting data. I will analyze both image and text to create 10 memecoin suggestions in the specified JSON format." }] }
             ]
         });
 
-        console.log("Sending user content to Gemini for analysis using your V6 prompt...");
+        console.log("Sending final prompt parts to Gemini...");
         const result = await chat.sendMessage(userContentParts);
-        const text = result.response.text();
-        console.log("Received from Gemini:", text);
+        const responseText = result.response.text();
+        console.log("Received from Gemini:", responseText);
 
-        const jsonMatch = text.match(/\[.*\]/s);
-        if (!jsonMatch) { throw new Error("AI did not return a valid JSON array. Response was: " + text); }
+        const jsonMatch = responseText.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+        if (!jsonMatch) { throw new Error("AI did not return a valid JSON array. Response was: " + responseText); }
 
         const aiResponse = JSON.parse(jsonMatch[0]);
         res.status(200).json(aiResponse);
