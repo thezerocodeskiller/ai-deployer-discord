@@ -1,122 +1,63 @@
 /*
-   Uxento AI Sniper v32 – Discord Edition (Correct Fallback Logic)
-   This version implements the correct, two-stage image handling:
-   1. AI Analysis: Uses ONLY the main tweet image (or null if none exists).
-   2. API Creation: Uses the main tweet image, BUT falls back to the author's
-      profile picture if the main image is missing, ensuring the API call succeeds.
+   Uxento AI Sniper v40 – Discord Edition (Ticker First UI)
+   This version updates the UI to display the ticker before the name on
+   suggestion pills for faster recognition, as requested by the user.
 */
-console.log('🚀 Uxento AI Sniper v32 – Correct Fallback Logic ACTIVE');
+console.log('🚀 Uxento AI Sniper v40 – Ticker First UI ACTIVE');
 
-// ---------- Helper Functions (Unchanged) ----------
-function simulateTyping(inputElement, text) {
-    if (!inputElement) return;
-    inputElement.focus();
-    inputElement.value = text;
-    inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-    inputElement.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-function parseUrlFromProxy(proxyHref) {
-    if (!proxyHref || !proxyHref.startsWith('http')) return null;
-    try {
-        const url = new URL(proxyHref);
-        const originalUrl = url.searchParams.get('url');
-        if (originalUrl && originalUrl.startsWith('http')) {
-            return decodeURIComponent(originalUrl);
-        }
-    } catch (e) { /* Ignore parsing errors */ }
-    return proxyHref;
-}
-
-// ---------- Data Extraction (REVISED to separate image sources) ----------
+// ---------- Helper & Data Extraction (Unchanged and Stable) ----------
+function parseUrlFromProxy(proxyHref) { if (!proxyHref || !proxyHref.startsWith('http')) return null; try { const url = new URL(proxyHref); const originalUrl = url.searchParams.get('url'); if (originalUrl && originalUrl.startsWith('http')) { return decodeURIComponent(originalUrl); } } catch (e) {} return proxyHref; }
 function extractDataFromDiscord(messageListItem) {
     const embedArticle = messageListItem.querySelector('article[class*="embedFull"]');
     if (!embedArticle) return null;
-
     const data = {
         mainText: embedArticle.querySelector('div[class*="embedDescription"]')?.innerText.trim() || '',
         author: embedArticle.querySelector('a[class*="embedAuthorNameLink"]')?.textContent.trim().replace('@', '').toLowerCase() || null,
-        twitterUrl: null,
-        // **NEW: We now track two separate image URLs**
-        tweetImageUrl: null,  // The image from the tweet content itself
-        authorImageUrl: null // The author's profile picture
+        twitterUrl: null, tweetImageUrl: null, authorImageUrl: null
     };
-
-    // --- Get Author PFP ---
     const authorIcon = embedArticle.querySelector('img[class*="embedAuthorIcon"]');
-    if (authorIcon?.src) {
-        data.authorImageUrl = authorIcon.src;
-    }
-
-    // --- Get Text & Links ---
+    if (authorIcon?.src) data.authorImageUrl = authorIcon.src;
     const titleLink = embedArticle.querySelector('a[class*="embedTitleLink"]');
     const authorLink = embedArticle.querySelector('a[class*="embedAuthorNameLink"]');
     if (titleLink?.href) data.twitterUrl = titleLink.href;
     else if (authorLink?.href) data.twitterUrl = authorLink.href;
-
-    // --- Get Main Tweet Image/Video ---
     const mediaWrapperLink = embedArticle.querySelector('a[class*="originalLink"]');
-    if (mediaWrapperLink?.href) {
-        data.tweetImageUrl = parseUrlFromProxy(mediaWrapperLink.href);
-    }
-    
-    // --- Final Validation ---
-    if (!data.twitterUrl && !data.tweetImageUrl) return null; // Must have at least one primary content piece
-    if (!data.author) {
-        data.author = messageListItem.querySelector('h3[class*="header"] span[class*="username"]')?.textContent.trim().toLowerCase() || 'unknown';
-    }
-
+    if (mediaWrapperLink?.href) data.tweetImageUrl = parseUrlFromProxy(mediaWrapperLink.href);
+    if (!data.twitterUrl && !data.tweetImageUrl) return null;
+    if (!data.author) data.author = messageListItem.querySelector('h3[class*="header"] span[class*="username"]')?.textContent.trim().toLowerCase() || 'unknown';
     return data;
 }
 
-// ---------- UI and API Logic (API call is now smarter) ----------
-const cardFireState = {};
-function getPanelTemplate(cardId) {
-    // Unchanged
-    return `
-    <div class="uxento-panel" style="width: 280px; flex-shrink: 0; padding: 12px; background: #2b2d31; border-left: 1px solid #404249; display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #f2f3f5;">
-      <button id="insta-${cardId}" style="background: #be185d; color: #fff; border: none; border-radius: 4px; padding: 10px; cursor: pointer; font-weight: 600;">Insta-Snipe Top Suggestion</button>
-      <div><label style="color: #b5bac1; font-size: 11px; display: block; margin-bottom: 4px;">Name</label><input id="name-${cardId}" placeholder="Waiting for AI..." style="box-sizing: border-box; width:100%;background:#383a40;border:1px solid #5c5f66;border-radius:4px;color:#f2f3f5;padding:8px;"></div>
-      <div><label style="color: #b5bac1; font-size: 11px; display: block; margin-bottom: 4px;">Ticker</label><input id="ticker-${cardId}" placeholder="..." style="box-sizing: border-box; width:100%;background:#383a40;border:1px solid #5c5f66;border-radius:4px;color:#f2f3f5;padding:8px;"></div>
-      <div style="flex:1; overflow-y:auto; max-height:400px; display:flex; flex-direction:column; gap:6px;">
-        <ul id="sugg-${cardId}" style="list-style:none; padding:0; margin:0;"><li style="color:#a1a1aa;text-align:center;padding:10px;">✨ Consulting Oracle…</li></ul>
-      </div>
-      <div><label style="color: #b5bac1; font-size: 11px; display: block; margin-bottom: 4px;">Buy Amount (SOL)</label><input id="amt-${cardId}" value="0.001" style="box-sizing: border-box; width:100%;background:#383a40;border:1px solid #5c5f66;border-radius:4px;color:#f2f3f5;padding:8px;"></div>
-      <button id="create-${cardId}" disabled style="background: #3f3f46; color: #a1a1aa; border: none; border-radius: 4px; padding: 10px; cursor: not-allowed; font-weight: 600;">Create Manually</button>
-    </div>
-  `;
-}
-function createCoin(cardId, tweetData, name, symbol, amount) {
-    if (cardFireState[cardId]) return;
-    cardFireState[cardId] = true;
-    const instaButton = document.getElementById(`insta-${cardId}`);
-    const createButton = document.getElementById(`create-${cardId}`);
-    instaButton.disabled = true; createButton.disabled = true;
-    instaButton.textContent = 'FIRING...'; instaButton.style.backgroundColor = '#d97706';
-    createButton.textContent = 'DEPLOYING...';
-
-    // --- THE CRITICAL FALLBACK LOGIC ---
-    // Use the main tweet image if it exists, otherwise use the author's profile picture.
+// ---------- API Logic (Unchanged) ----------
+function createCoin(sniperBar, tweetData, name, symbol, amount) {
+    sniperBar.innerHTML = '';
+    const statusPill = document.createElement('button');
+    statusPill.disabled = true;
+    statusPill.style.cssText = `
+        background-color: #d97706; color: #fff; border: 1px solid #9a3412;
+        border-radius: 6px; padding: 6px 10px; font-size: 13px;
+        font-weight: 600; cursor: wait;
+    `;
+    statusPill.textContent = `FIRING: ($${symbol}) ${name}`;
+    sniperBar.appendChild(statusPill);
     const imageForApi = tweetData.tweetImageUrl || tweetData.authorImageUrl;
-    console.log(`Preparing API call. Main image: ${tweetData.tweetImageUrl}, Fallback PFP: ${tweetData.authorImageUrl}. Using: ${imageForApi}`);
-
     chrome.runtime.sendMessage({
         action: 'CREATE_COIN',
         payload: { name, symbol, twitter: tweetData.twitterUrl, image: imageForApi, amount: parseFloat(amount), astralTip: 0.002 }
     }, (response) => {
         if (response?.ok) {
-            instaButton.textContent = '✅ SNIPE SUCCESSFUL!'; createButton.textContent = '✅ CREATED';
-            instaButton.style.backgroundColor = '#16a34a';
+            statusPill.textContent = `✅ CREATED: ($${symbol}) ${name}`;
+            statusPill.style.backgroundColor = '#16a34a';
+            statusPill.style.borderColor = '#14532d';
         } else {
-            instaButton.textContent = '❌ API FAILED'; createButton.textContent = '❌ FAILED';
-            instaButton.style.backgroundColor = '#ef4444';
-            instaButton.disabled = false; createButton.disabled = false;
-            cardFireState[cardId] = false;
+            statusPill.textContent = `❌ FAILED: ($${symbol}) ${name}`;
+            statusPill.style.backgroundColor = '#ef4444';
+            statusPill.style.borderColor = '#7f1d1d';
         }
     });
 }
 
-// ---------- Core Processing Logic ----------
+// ---------- Core Processing Logic with Dual-Arming System ----------
 async function processMessage(messageListItem) {
     if (messageListItem.dataset.aiProcessed) return;
     messageListItem.dataset.aiProcessed = 'true';
@@ -125,75 +66,113 @@ async function processMessage(messageListItem) {
         const tweetData = extractDataFromDiscord(messageListItem);
         if (!tweetData) return;
 
-        console.log("Processing NEW Embed:", tweetData);
-        const cardId = 'discord-' + Date.now() + Math.random().toString(36).slice(2, 7);
+        const cardId = 'discord-' + Date.now();
         const accessoriesContainer = messageListItem.querySelector('div[id^="message-accessories"]');
         if (!accessoriesContainer) return;
-        
-        // Setup UI (unchanged)
-        accessoriesContainer.style.display = 'flex';
-        accessoriesContainer.style.alignItems = 'flex-start';
-        accessoriesContainer.style.gap = '16px';
-        accessoriesContainer.querySelectorAll('article[class*="embedFull"]').forEach(embed => {
-            embed.style.flex = '1'; embed.style.minWidth = '0'; embed.style.order = '1';
-        });
-        const panelDiv = document.createElement('div');
-        panelDiv.innerHTML = getPanelTemplate(cardId);
-        const panelElement = panelDiv.firstElementChild;
-        panelElement.style.order = '99';
-        accessoriesContainer.appendChild(panelElement);
-        const instaBtn = document.getElementById(`insta-${cardId}`), createBtn = document.getElementById(`create-${cardId}`), nameIn = document.getElementById(`name-${cardId}`), tickIn = document.getElementById(`ticker-${cardId}`), amtIn = document.getElementById(`amt-${cardId}`), suggUl = document.getElementById(`sugg-${cardId}`);
-        instaBtn.onclick = () => createCoin(cardId, tweetData, nameIn.value, tickIn.value, amtIn.value);
-        createBtn.onclick = () => createCoin(cardId, tweetData, nameIn.value, tickIn.value, amtIn.value);
-        
-        try {
-            // --- AI CALL USES THE PURE TWEET IMAGE URL ---
-            const bodyForAI = {
-                mainText: tweetData.mainText,
-                quotedText: "", // You can add logic for this later if needed
-                mainImageUrl: tweetData.tweetImageUrl // This will be null if there's no main image, which is correct.
-            };
 
-            console.log("Sending data to AI:", bodyForAI);
+        let isArmed = false;
+
+        const sniperBar = document.createElement('div');
+        sniperBar.id = `uxento-sniper-bar-${cardId}`;
+        sniperBar.style.cssText = `display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px; width: 100%;`;
+        accessoriesContainer.prepend(sniperBar);
+        
+        const messageContainer = messageListItem.querySelector('div[class*="message_"]');
+        
+        const armSystem = () => {
+            if (isArmed) return;
+            isArmed = true;
+            if (messageContainer) {
+                messageContainer.style.cursor = 'default';
+                messageContainer.onclick = null;
+            }
+            sniperBar.innerHTML = '';
+            const armedPill = document.createElement('button');
+            armedPill.disabled = true;
+            armedPill.textContent = 'ARMED & WAITING FOR AI...';
+            armedPill.style.cssText = `
+                background-color: #d97706; color: #fff; border: 1px solid #9a3412;
+                border-radius: 6px; padding: 6px 10px; font-size: 13px;
+                font-weight: 600; cursor: wait;
+            `;
+            sniperBar.appendChild(armedPill);
+        };
+
+        for (let i = 0; i < 6; i++) {
+            const placeholder = document.createElement('button');
+            placeholder.innerHTML = `<span> </span>`;
+            placeholder.style.cssText = `
+                background-color: #383a40; border: 1px solid #5c5f66; border-radius: 6px;
+                padding: 6px 10px; font-size: 13px; cursor: pointer; min-width: 100px;
+                animation: pulse 1.5s infinite ease-in-out;
+            `;
+            placeholder.onclick = armSystem;
+            sniperBar.appendChild(placeholder);
+        }
+        if (messageContainer) {
+            messageContainer.style.cursor = 'pointer';
+            messageContainer.onclick = (e) => {
+                if (e.target.closest('a, button')) return;
+                armSystem();
+            };
+        }
+        if (!document.getElementById('uxento-pulse-style')) {
+            const style = document.createElement('style');
+            style.id = 'uxento-pulse-style';
+            style.textContent = `@keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`;
+            document.head.appendChild(style);
+        }
+
+        try {
+            const bodyForAI = { mainText: tweetData.mainText, mainImageUrl: tweetData.tweetImageUrl };
             
-        const response = await fetch('https://ai-deployer-discord.vercel.app/api/generate-name', {
+            const response = await fetch('https://ai-deployer-discord.vercel.app/api/generate-name', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(bodyForAI)
             });
             if (!response.ok) throw new Error(`AI API Error: ${response.status}`);
             const suggestions = await response.json();
-            suggUl.innerHTML = '';
-            suggestions.forEach((s, index) => {
-                const li = document.createElement('li');
-                li.style.cssText = 'padding: 8px; border: 1px solid #52525b; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; transition: all 0.2s;';
-                li.innerHTML = `<span>${s.name}</span><span style="color:#a1a1aa">$${s.ticker}</span>`;
-                li.onmouseenter = () => li.style.borderColor = '#4f46e5';
-                li.onmouseleave = () => li.style.borderColor = '#52525b';
-                li.onclick = () => {
-                    simulateTyping(nameIn, s.name);
-                    simulateTyping(tickIn, s.ticker);
-                    createCoin(cardId, tweetData, s.name, s.ticker, amtIn.value);
-                };
-                suggUl.appendChild(li);
-                if (index === 0) {
-                    simulateTyping(nameIn, s.name);
-                    simulateTyping(tickIn, s.ticker);
-                    createBtn.disabled = false;
-                    createBtn.style.backgroundColor = '#4f46e5';
-                    createBtn.style.color = '#fff';
-                    createBtn.style.cursor = 'pointer';
+            
+            if (isArmed) {
+                if (suggestions.length > 0) {
+                    const topSuggestion = suggestions[0];
+                    createCoin(sniperBar, tweetData, topSuggestion.name, topSuggestion.ticker, 1.0);
                 }
-            });
+            } else {
+                if (messageContainer) {
+                    messageContainer.style.cursor = 'default';
+                    messageContainer.onclick = null;
+                }
+                sniperBar.innerHTML = '';
+                suggestions.forEach(s => {
+                    const button = document.createElement('button');
+                    
+                    // --- THIS IS THE CHANGE ---
+                    const nameSpan = `<span style="font-weight: 600;">${s.name}</span>`;
+                    const tickerSpan = `<span style="color: #b5bac1; margin-right: 5px;">($${s.ticker})</span>`;
+                    button.innerHTML = tickerSpan + nameSpan; // Ticker is now first
+                    // --- END CHANGE ---
+
+                    button.style.cssText = `
+                        background-color: #383a40; color: #f2f3f5; border: 1px solid #5c5f66;
+                        border-radius: 6px; padding: 6px 10px; font-size: 13px;
+                        cursor: pointer; transition: background-color 0.2s;
+                    `;
+                    button.onmouseenter = () => { if (!button.disabled) button.style.backgroundColor = '#4f46e5'; };
+                    button.onmouseleave = () => { if (!button.disabled) button.style.backgroundColor = '#383a40'; };
+                    button.onclick = () => createCoin(sniperBar, tweetData, s.name, s.ticker, 1.0);
+                    sniperBar.appendChild(button);
+                });
+            }
         } catch (e) {
             console.error("AI suggestion fetch failed:", e);
-            suggUl.innerHTML = `<li style="color:#ef4444; text-align: center; padding: 10px;">AI suggestion failed.</li>`;
-            instaBtn.disabled = true; instaBtn.textContent = 'AI FAILED'; instaBtn.style.backgroundColor = '#ef4444';
+            sniperBar.innerHTML = `<span style="color:#ef4444; font-size: 12px;">AI suggestion failed.</span>`;
         }
     }, 250);
 }
 
-// ---------- Event-Driven Observer Logic (Unchanged and Stable) ----------
+// ---------- Event-Driven Observer Logic (Stable) ----------
 const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
