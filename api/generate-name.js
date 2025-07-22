@@ -12,8 +12,9 @@ const fal = require('@fal-ai/serverless-client');
 const GOOGLE_API_KEY = process.env.API_KEY;
 const FAL_API_KEY = process.env.FAL_API_KEY;
 
-if (!GOOGLE_API_KEY) { throw new Error("FATAL ERROR: Missing Google API_KEY in environment variables."); }
-if (!FAL_API_KEY) { throw new Error("FATAL ERROR: Missing FAL_API_KEY in environment variables."); }
+if (!GOOGLE_API_KEY || !FAL_API_KEY) {
+    throw new Error("FATAL ERROR: Missing Google API_KEY or FAL_API_KEY in environment variables.");
+}
 
 fal.config({ credentials: FAL_API_KEY });
 
@@ -42,9 +43,15 @@ const runMiddleware = (req, res, fn) => {
 async function fetchAndProcessImage(imageUrl) {
     try {
         const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-        const processedImageBuffer = await sharp(response.data).resize(512, 512, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 75 }).toBuffer();
+        const processedImageBuffer = await sharp(response.data)
+            .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 75 })
+            .toBuffer();
         return { inlineData: { data: processedImageBuffer.toString('base64'), mimeType: 'image/jpeg' } };
-    } catch (error) { console.error("Error fetching or processing image:", error.message); return null; }
+    } catch (error) {
+        console.error("Error fetching or processing image:", error.message);
+        return null;
+    }
 }
 
 async function generateColorImage(color, text) {
@@ -57,9 +64,15 @@ async function generateColorImage(color, text) {
 async function generateAiImage(prompt) {
     try {
         console.log(`Sending prompt to Fal.ai: "${prompt}"`);
-        const result = await fal.subscribe("fal-ai/fast-sdxl", { input: { prompt }, logs: false });
+        const result = await fal.subscribe("fal-ai/fast-sdxl", {
+            input: { prompt },
+            logs: false,
+        });
         return result.images[0].url;
-    } catch (error) { console.error("Fal.ai image generation failed:", error); return null; }
+    } catch (error) {
+        console.error("Fal.ai image generation failed:", error);
+        return null;
+    }
 }
 
 // --- MAIN HANDLER FUNCTION ---
@@ -140,25 +153,36 @@ Now, await the user's data and execute your directives. Your entire response mus
             if (imagePart) userContentParts.push(imagePart);
         }
 
-        const chat = model.startChat({ history: [{ role: "user", parts: [{ text: "Instructions" }] }, { role: "model", parts: [{ text: systemInstructions }] }] });
+        const chat = model.startChat({
+            history: [
+                { role: "user", parts: [{ text: "Here are your instructions for our session." }] },
+                { role: "model", parts: [{ text: systemInstructions }] }
+            ]
+        });
+
         const result = await chat.sendMessage(userContentParts);
         const text = result.response.text();
         const jsonMatch = text.match(/\[.*\]/s);
-        if (!jsonMatch) { throw new Error("AI did not return a valid JSON array. Response: " + text); }
+        if (!jsonMatch) { throw new Error("AI did not return a valid JSON array. Response was: " + text); }
         const suggestions = JSON.parse(jsonMatch[0]);
 
         // --- STAGE 2: Generate the Image ---
         let generatedImageUrl = null;
         if (tweetData.mainImageUrl) {
             generatedImageUrl = tweetData.mainImageUrl;
+            console.log("Tweet already has an image, using that.");
         } else {
             const topSuggestionName = suggestions[0].name;
             const topSuggestionTicker = suggestions[0].ticker;
             const colorMatch = tweetData.mainText.match(/\$([a-zA-Z]+)/);
+
             if (colorMatch && colorMatch[1]) {
-                generatedImageUrl = await generateColorImage(colorMatch[1].toLowerCase(), `$${topSuggestionTicker}`);
+                const color = colorMatch[1].toLowerCase();
+                console.log(`Simple color prompt detected. Generating image for color: "${color}"`);
+                generatedImageUrl = await generateColorImage(color, `$${topSuggestionTicker}`);
             } else {
-                generatedImageUrl = await generateAiImage(`${topSuggestionName}, memecoin logo, clean vector art, vibrant colors, white background`);
+                const imagePrompt = `${topSuggestionName}, memecoin logo, clean vector art, vibrant colors, white background`;
+                generatedImageUrl = await generateAiImage(imagePrompt);
             }
         }
 
