@@ -9,7 +9,7 @@ const API_KEY = process.env.API_KEY;
 if (!API_KEY) {
     throw new Error("FATAL ERROR: API_KEY is not set in environment variables.");
 }
-const MODEL_NAME = "gemini-2.5-flash-lite-preview-06-17"; // Using the latest Flash model
+const MODEL_NAME = "gemini-1.5-flash-latest"; // Using the latest Flash model
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ 
@@ -155,9 +155,7 @@ Now, await the user's data and execute your directives. Your entire response mus
         Execute your directives. Prioritize creative fusion but guarantee 10 concrete, literal results that adhere strictly to the character limits. Your first 3 suggestions are your strongest.
         
         JSON Output:
-        `;
-        
-        
+        `;        
         userContentParts.push({ text: textPayload });
 
         // This is where the fix makes a difference. If mainImageUrl exists, we now successfully fetch it.
